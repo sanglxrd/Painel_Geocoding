@@ -1,0 +1,289 @@
+library(shiny)
+library(leaflet)
+library(ggplot2)
+library(dplyr)
+library(RColorBrewer)
+library(sf)
+
+rm(list = ls())
+gc(T)
+
+# Leia os bancos de dados
+dengue_geocoded_ARCGIS <- read.csv("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/R_Walter/DENGUE_ARCGIS_GEOCODED.csv", sep = ",") %>%
+  filter(!is.na(lat)) %>%
+  mutate(SG_UF_NOT = as.numeric(SG_UF_NOT))
+
+dengue_geocoded_OSM <- read.csv("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/R_Walter/DENGUE_OSM_GEOCODED.csv", sep = ",") %>%
+  filter(!is.na(lat)) %>%
+  mutate(SG_UF_NOT = as.numeric(SG_UF_NOT))
+
+dengue_geocoded_GOOGLE <- read.csv("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/R_Walter/DENGUE_GOOGLE_API_GEOCODED.csv", sep = ",") %>%
+  filter(!is.na(lat)) %>%
+  mutate(SG_UF_NOT = as.numeric(SG_UF_NOT))
+
+dengue_geocoded_CNEFE <- read.csv("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/R_Walter/dengue_geocoded_SIMILARIDADES.csv", sep = ",") %>%
+  filter(!is.na(lat)) %>%
+  mutate(SG_UF_NOT = as.numeric(SG_UF_NOT))
+
+
+# Função para tratamento de dados
+processar_dados <- function(df) {
+  df %>%
+    mutate(
+      CS_RACA = case_when(
+        CS_RACA == 1 ~ "Branca",
+        CS_RACA == 2 ~ "Preta",
+        CS_RACA == 3 ~ "Amarela",
+        CS_RACA == 4 ~ "Parda",
+        CS_RACA == 5 ~ "Indígena",
+        CS_RACA == 9 ~ "Ignorado",
+        is.na(CS_RACA) ~ "Em branco"
+      ),
+      CS_SEXO = case_when(
+        CS_SEXO == "M" ~ "Masculino",
+        CS_SEXO == "F" ~ "Feminino",
+        CS_SEXO == "I" ~ "Ignorado",
+        is.na(CS_SEXO) ~ "Em branco"
+      ),
+      RESUL_NS1 = case_when(
+        RESUL_NS1 == 1 ~ "Positivo",
+        RESUL_NS1 == 2 ~ "Negativo",
+        RESUL_NS1 == 3 ~ "Inconclusivo",
+        RESUL_NS1 == 4 ~ "Não realizado",
+        is.na(RESUL_NS1) ~ "Em branco"
+      ),
+      NU_IDADE_N = case_when(
+        NU_IDADE_N < 3999 ~ 0,
+        NU_IDADE_N >= 4000 ~ as.numeric(substr(as.character(NU_IDADE_N), 3, 4)),
+        TRUE ~ NA_real_
+      ),
+      SG_UF_NOT = case_when(
+        SG_UF_NOT == 11 ~ "Rondônia",
+        SG_UF_NOT == 12 ~ "Acre",
+        SG_UF_NOT == 13 ~ "Amazonas",
+        SG_UF_NOT == 14 ~ "Roraima",
+        SG_UF_NOT == 15 ~ "Pará",
+        SG_UF_NOT == 16 ~ "Amapá",
+        SG_UF_NOT == 17 ~ "Tocantins",
+        SG_UF_NOT == 21 ~ "Maranhão",
+        SG_UF_NOT == 22 ~ "Piauí",
+        SG_UF_NOT == 23 ~ "Ceará",
+        SG_UF_NOT == 24 ~ "Rio Grande do Norte",
+        SG_UF_NOT == 25 ~ "Paraíba",
+        SG_UF_NOT == 26 ~ "Pernambuco",
+        SG_UF_NOT == 27 ~ "Alagoas",
+        SG_UF_NOT == 28 ~ "Sergipe",
+        SG_UF_NOT == 29 ~ "Bahia",
+        SG_UF_NOT == 31 ~ "Minas Gerais",
+        SG_UF_NOT == 32 ~ "Espírito Santo",
+        SG_UF_NOT == 33 ~ "Rio de Janeiro",
+        SG_UF_NOT == 35 ~ "São Paulo",
+        SG_UF_NOT == 41 ~ "Paraná",
+        SG_UF_NOT == 42 ~ "Santa Catarina",
+        SG_UF_NOT == 43 ~ "Rio Grande do Sul",
+        SG_UF_NOT == 50 ~ "Mato Grosso do Sul",
+        SG_UF_NOT == 51 ~ "Mato Grosso",
+        SG_UF_NOT == 52 ~ "Goiás",
+        SG_UF_NOT == 53 ~ "Distrito Federal",
+        TRUE ~ "Desconhecido"
+      )
+    )
+}
+
+# Aplicar o tratamento aos dados
+dengue_geocoded_ARCGIS <- processar_dados(dengue_geocoded_ARCGIS)
+dengue_geocoded_OSM <- processar_dados(dengue_geocoded_OSM)
+dengue_geocoded_GOOGLE <- processar_dados(dengue_geocoded_GOOGLE)
+dengue_geocoded_CNEFE <- processar_dados(dengue_geocoded_CNEFE) 
+
+
+# UI
+ui <- fluidPage(
+  titlePanel(div(style = "color: #004D99; font-size: 28px;", "Painel de Geoencoding de Agravos de Notificação")),
+  sidebarLayout(
+    sidebarPanel(
+      h4("Seleção do Banco de Dados", style = "color: #004D99;"),
+      checkboxGroupInput(
+        inputId = "apis_comparacao",
+        label = "Selecione as APIs para comparação:",
+        choices = c("Google", "ArcGIS", "OSM", "CNEFE"),
+        selected = c("Google", "ArcGIS", "OSM", "CNEFE")
+      ),
+      numericInput(
+        inputId = "threshold",
+        label = "Limite de Distância para Correspondência (em metros):",
+        value = 100,
+        min = 0
+      ),
+      style = "background-color: #E6F2FF; padding: 15px; border-radius: 10px; box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);"
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel(
+          "Comparação de APIs",
+          plotOutput("graficoComparacao"),
+          leafletOutput("mapaComparacao"),
+          style = "background-color: #F5FAFF; padding: 10px; border-radius: 10px;"
+        ),
+        tabPanel(
+          "Teste de Acurácia",
+          tableOutput("tabelaDistancias"),
+          plotOutput("graficoAcuracia"),
+          style = "background-color: #F5FAFF; padding: 10px; border-radius: 10px;"
+        )
+      )
+    )
+  )
+)
+
+# Server
+server <- function(input, output, session) {
+  dados <- reactive({
+    if ("Google" %in% input$apis_comparacao) {
+      dengue_geocoded_GOOGLE
+    } else if ("ArcGIS" %in% input$apis_comparacao) {
+      dengue_geocoded_ARCGIS
+    } else if ("OSM" %in% input$apis_comparacao) {
+      dengue_geocoded_OSM
+    } else if ("CNEFE" %in% input$apis_comparacao) {
+      dengue_geocoded_CNEFE
+    } else {
+      NULL
+    }
+  })
+  
+  # Atualizar filtros dinamicamente
+  observe({
+    df <- dados()
+    if (!is.null(df)) {
+      estados <- unique(df$SG_UF_NOT)
+      updateSelectInput(session, "estado", choices = c("Todos", estados), selected = "Todos")
+      racas <- unique(df$CS_RACA)
+      updateSelectInput(session, "raca", choices = c("Todas", racas), selected = "Todas")
+      sexos <- unique(df$CS_SEXO)
+      updateSelectInput(session, "sexo", choices = c("Todos", sexos), selected = "Todos")
+      resultados <- unique(df$RESUL_NS1)
+      updateSelectInput(session, "result", choices = c("Todos", resultados), selected = "Todos")
+    }
+  })
+  
+  # Comparação de APIs
+  output$graficoComparacao <- renderPlot({
+    selected_apis <- input$apis_comparacao
+    
+    comparison_data <- list(
+      "Google" = if("Google" %in% selected_apis) dengue_geocoded_GOOGLE else NULL,
+      "ArcGIS" = if("ArcGIS" %in% selected_apis) dengue_geocoded_ARCGIS else NULL,
+      "OSM" = if("OSM" %in% selected_apis) dengue_geocoded_OSM else NULL,
+      "CNEFE" = if("CNEFE" %in% selected_apis) dengue_geocoded_CNEFE else NULL
+    )
+    
+    comparison_results <- lapply(comparison_data, function(data) {
+      if (!is.null(data)) {
+        data %>% filter(!is.na(lat), !is.na(long)) %>% nrow()
+      } else {
+        0
+      }
+    })
+    
+    comparison_df <- data.frame(
+      API = names(comparison_results),
+      Count = unlist(comparison_results)
+    )
+    
+    ggplot(comparison_df, aes(x = API, y = Count, fill = API)) +
+      geom_bar(stat = "identity") +
+      theme_minimal() +
+      labs(title = "Número de Localizações Geocodificadas por API",
+           x = "API",
+           y = "Número de Localizações")
+  })
+  
+  output$mapaComparacao <- renderLeaflet({
+    selected_apis <- input$apis_comparacao
+    
+    map <- leaflet() %>% addTiles()
+    
+    if ("Google" %in% selected_apis) {
+      map <- map %>% addCircleMarkers(data = dengue_geocoded_GOOGLE, lat = ~lat, lng = ~long, color = "blue", fillOpacity = 0.7, radius = 5, popup = "Google")
+    }
+    if ("ArcGIS" %in% selected_apis) {
+      map <- map %>% addCircleMarkers(data = dengue_geocoded_ARCGIS, lat = ~lat, lng = ~long, color = "red", fillOpacity = 0.7, radius = 5, popup = "ArcGIS")
+    }
+    if ("OSM" %in% selected_apis) {
+      map <- map %>% addCircleMarkers(data = dengue_geocoded_OSM, lat = ~lat, lng = ~long, color = "purple", fillOpacity = 0.7, radius = 5, popup = "OSM")
+    }
+    if ("CNEFE" %in% selected_apis) {
+      map <- map %>% addCircleMarkers(data = dengue_geocoded_CNEFE, lat = ~lat, lng = ~long, color = "purple", fillOpacity = 0.7, radius = 5, popup = "CNEFE")
+    }
+    
+    map
+  })
+  
+  # Distância e acurácia
+  output$tabelaDistancias <- renderTable({
+    selected_apis <- input$apis_comparacao
+    threshold <- input$threshold
+    
+    if (length(selected_apis) < 2) {
+      return(data.frame(Mensagem = "Selecione pelo menos duas APIs para calcular distâncias e acurácia."))
+    }
+    
+    api_data <- list(
+      "Google" = dengue_geocoded_GOOGLE,
+      "ArcGIS" = dengue_geocoded_ARCGIS,
+      "OSM" = dengue_geocoded_OSM,
+      "CNEFE" = dengue_geocoded_CNEFE
+    )
+    
+    results <- lapply(selected_apis[-length(selected_apis)], function(api) {
+      api_df <- api_data[[api]]
+      cnefe_df <- api_data[["CNEFE"]]
+      
+      combined <- inner_join(
+        api_df %>% select(NU_NOTIFIC, lat_api = lat, long_api = long),
+        cnefe_df %>% select(NU_NOTIFIC, lat_cnefe = lat, long_cnefe = long),
+        by = "NU_NOTIFIC"
+      )
+      
+      if (nrow(combined) == 0) {
+        return(data.frame(API = api, Acuracia = NA, `Distância Média (m)` = NA))
+      }
+      
+      api_sf <- st_as_sf(combined, coords = c("long_api", "lat_api"), crs = 4326, remove = FALSE)
+      cnefe_sf <- st_as_sf(combined, coords = c("long_cnefe", "lat_cnefe"), crs = 4326, remove = FALSE)
+      
+      distancias <- st_distance(api_sf, cnefe_sf, by_element = TRUE)
+      distancias <- as.numeric(distancias)
+      
+      acuracia <- mean(distancias <= threshold)
+      distancia_media <- mean(distancias)
+      
+      data.frame(
+        API = api,
+        Acuracia = round(acuracia * 100, 2),
+        `Distância Média (m)` = round(distancia_media, 2)
+      )
+    })
+    
+    do.call(rbind, results)
+  })
+  
+  # Gráfico de Acurácia
+  output$graficoAcuracia <- renderPlot({
+    tabela <- output$tabelaDistancias()
+    ggplot(tabela, aes(x = API, y = Acuracia, fill = API)) +
+      geom_bar(stat = "identity") +
+      theme_minimal() +
+      labs(title = "Acurácia por API", x = "API", y = "Acurácia (%)") +
+      scale_y_continuous(labels = scales::percent_format(scale = 1))
+  })
+}
+
+# Rodar o aplicativo
+shinyApp(ui, server)
+
+
+duplicados_api <- dengue_geocoded_GOOGLE %>%
+  count(NU_NOTIFIC) %>%
+  filter(n > 1)

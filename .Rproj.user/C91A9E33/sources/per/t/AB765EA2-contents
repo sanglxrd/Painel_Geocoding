@@ -1,0 +1,372 @@
+#Tratamento do banco
+pacman::p_load(dismo, Rcpp, openxlsx,
+               rio, ggmap, tidyverse, stringi, purrr, dplyr,
+               tidyverse, rvest,usethis, tidygeocoder, leaflet,
+               fuzzyjoin, stringdist)      
+
+rm(list = ls())
+setwd("C:/Users/Sanglard/Desktop/R_Walter")
+
+#bancos do sinan
+dengue_df <- import("DF Deng2014.csv", encoding = "UTF-8")
+dengue_pe <- import("REC Deng2014.csv", encoding = "UTF-8")
+dengue <- rbind(dengue_df, dengue_pe)
+
+#bancos cnefe
+cnefe_df <- import("53_DF_CENEFE.csv")
+cnefe_pe <- import("26_PE.csv")
+cnefe <- rbind(cnefe_df, cnefe_pe)
+
+rm(cnefe_df)
+rm(cnefe_pe)
+rm(dengue_df)
+rm(dengue_pe)
+gc()
+
+
+# Criar a coluna de endereço
+
+#dengue$address <- paste(dengue_df$NM_LOGRADO, dengue_df$NU_NUMERO, 
+#                          dengue_df$NM_COMPLEM, sep=", ")
+
+dengue$PAIS <- "Brasil"
+dengue <- dengue %>%
+  mutate(CIDADE = case_when(
+    SG_UF_NOT == 26 ~ "Recife",
+    SG_UF_NOT == 53 ~ "Distrito Federal",
+    TRUE ~ NA_character_  # Preenche com NA se nenhuma condição for atendida
+  ))
+
+dengue$address <- paste0(
+  ifelse(is.na(dengue$NM_LOGRADO), "", paste0(dengue$NM_LOGRADO, ", ")),
+  ifelse(is.na(dengue$CIDADE), "", paste0(dengue$CIDADE, ", ")),
+  ifelse(is.na(dengue$PAIS), "", dengue$PAIS)
+)
+
+
+
+#tratamento de endereços
+dengue <- dengue |>
+  mutate(
+    address = gsub("\\bAV\\b", "Avenida", address, ignore.case = TRUE),
+    address = gsub("\\bCD\\b", "Condomínio", address, ignore.case = TRUE),
+    address = gsub("\\bCond\\b", "Condomínio", address, ignore.case = TRUE),
+    address = gsub("\\bVL\\b", "Vila", address, ignore.case = TRUE),
+    address = gsub("\\bR\\.", "Rua", address, ignore.case = TRUE),
+    address = gsub("\\bR\\ ", "Rua", address, ignore.case = TRUE),
+    address = gsub("\\bR-\\ ", "Rua", address, ignore.case = TRUE),
+    address = gsub("\\bQD\\b|\\bQ\\b", "Quadra", address, ignore.case = TRUE),
+    address = gsub("\\bCH\\w*", "Chácara", address, ignore.case = TRUE),
+    address = gsub("\\bCJ\\b", "Conjunto", address, ignore.case = TRUE),
+    address = gsub("\\bCONJ\\b", "Conjunto", address, ignore.case = TRUE),
+    address = gsub("\\bN\\b", "Núcleo", address, ignore.case = TRUE),
+    address = gsub("\\bST\\b", "Setor", address, ignore.case = TRUE),
+    address = gsub("\\bAR\\b", "Área Residencial", address, ignore.case = TRUE),
+    address = gsub("\\bCTRL\\b", "Central", address, ignore.case = TRUE),
+    address = gsub("\\bCS\\b", "Casa", address, ignore.case = TRUE),
+    address = gsub("\\bRD\\b", "Rodovia", address, ignore.case = TRUE),
+    address = gsub("\\bAPT\\w*", "Apartamento", address, ignore.case = TRUE),
+    address = gsub("\\bLT\\b", "Lote", address, ignore.case = TRUE),
+    address = gsub("\\bCR\\b", "Conjunto Residencial", address, ignore.case = TRUE),
+    address = gsub("\\bSRL\\w*", "Setor Residencial Leste", address, ignore.case = TRUE),
+    address = gsub("Rua([A-Za-z])", "Rua \\1", address),
+    address = gsub("^R-(\\w+)", "Rua \\1", address, ignore.case = TRUE),
+    address = gsub("\\bPROF\\b\\.? ?", "Professor ", address, ignore.case = TRUE),
+    address = gsub("\\bProf.\\ ", "Professor", address, ignore.case = TRUE),
+    address = gsub("\\bDR\\b\\.? ?", "Doutor ", address, ignore.case = TRUE)
+  )
+
+
+#letras
+dengue <- dengue %>%
+  mutate(
+    address =  gsub("<d5>", "õ", address, ignore.case = TRUE),
+    address =   gsub("<c1>", "á", address, ignore.case = TRUE),
+    address =  gsub("<c2>", "â", address, ignore.case = TRUE),
+    address =   gsub("<c9>", "é", address, ignore.case = TRUE),
+    address =  gsub("<c3>", "ã", address, ignore.case = TRUE),
+    address =  gsub("<c7>", "ç", address, ignore.case = TRUE),
+    address =  gsub("<d4>", "ô", address, ignore.case = TRUE),
+    address = gsub("<aa>", "", address, ignore.case = TRUE),
+    address =  gsub("<ba>", "", address, ignore.case = TRUE),
+    address =  gsub("<bf>", "", address, ignore.case = TRUE),
+    address =  gsub("<ca>", "", address, ignore.case = TRUE),
+    address = gsub("<b0>", "", address, ignore.case = TRUE),
+    address = gsub("<c1>CARA", "", address, ignore.case = TRUE),
+    address = gsub("<da>CLEO", "", address, ignore.case = TRUE),
+    address = gsub("<Condomínio>", "", address, ignore.case = TRUE)
+  )
+
+View(dengue)
+
+
+#colocar maiusculo e converter possiveis erros
+dengue$address <- dengue$address %>%
+  iconv(from = "UTF-8", to = "UTF-8", sub = "") %>%  #codificação
+  toupper()  #maiúsculas
+
+
+#retirar vírgulas e contar NAs
+sum(is.na(dengue$address))
+sum(dengue$address == "")
+
+#dengue <- dengue |> 
+#  mutate(address = gsub(",", "", address),
+#         address = gsub("\\.", "", address))
+
+
+#testes no banco
+sum(duplicated(dengue$address))
+
+#criar coluna para duplicatas
+dengue <- dengue %>%
+  mutate(address_unique = paste0(address, "_", row_number()))
+
+#CRIAR COLUNA ID_UNICO
+dengue$ID_UNICO <- sprintf("%06d", seq(1, nrow(dengue)))
+
+
+
+
+
+
+
+
+
+
+########### GEOENCODING VIA APIs remotas ################
+# Geocodificar o banco usando o Google Maps
+Sys.setenv(GOOGLEGEOCODE_API_KEY = "AIzaSyDUtOE7Sc19ACb-uXmh8qTLGnVZnYLgEvE")
+
+dengue_GOOGLE <- dengue %>%
+  #slice(4001:6000) %>% #corta linhas do banco para testes
+  geocode(address = address_unique, 
+          method = "google")
+
+Sys.time()
+
+sum(is.na(dengue_GOOGLE$lat))
+
+#dengue_semcep_geocoded <- dengue_semcep_geocoded %>%
+# mutate(across(where(is.list), ~sapply(., toString)))
+
+write.csv(dengue_GOOGLE, "./DENGUE_GOOGLE.csv") #INICIO 22:17 -- 23:30
+
+
+
+
+# Geoencoding via ARCGIS
+dengue_ARCGIS <- dengue %>%
+  #slice(4001:6000) %>% #corta linhas do banco para testes
+  geocode(address = address_unique, 
+          method = "arcgis")
+
+sum(is.na(dengue_ARCGIS$lat))
+write.csv(dengue_ARCGIS, "./DENGUE_ARCGIS.csv") # início 10:53 - término 14;30 - 217 MINUTOs (3h37min)
+
+
+# Geoencoding via Open street Map
+dengue_OSM <- dengue %>%
+  #slice(4001:6000) %>% #corta linhas do banco para testes
+  geocode(address = address, 
+          method = "osm",
+          unique_only = TRUE)
+
+sum(is.na(dengue_OSM$lat))
+write.csv(dengue_OSM, "./DENGUE_OSM.csv") #início 08:10 ----- 14:00H - 350 min 
+
+
+
+
+
+
+
+
+
+#BLOCAGEM DE DADOS PARA O BANCO DO CNEFE
+dengue_cep <- dengue |> 
+  filter(!is.na(NU_CEP))
+
+dengue_semcep <- dengue |> 
+  filter(is.na(NU_CEP))
+
+# Geocodificar o banco a partir do CEP usando o CNEFE
+cnefe_unique <- cnefe %>%
+  distinct(CEP, .keep_all = TRUE)
+
+dengue_cep <- dengue_cep %>%
+  left_join(cnefe_unique %>% select(CEP, LATITUDE, LONGITUDE), 
+            by = c("NU_CEP" = "CEP"))
+
+
+#renomear coplunas
+dengue_cep <-  dengue_cep |> 
+  rename(lat = LATITUDE,
+         long = LONGITUDE)
+
+sum(is.na(dengue_cep$lat))
+
+#filtrar banco não codificado pelo CNEFE                     # PRIMEIRA PARTE GEOCODIFICADA.
+dengue_cnefe <- dengue_cep |> 
+  filter(!is.na(lat))
+
+#filtrar banco codificado pelo CNEFE
+dengue_nao_cnefe <- dengue_cep |> 
+  filter(is.na(lat))
+
+#unir bancos para geocodificar por API (os registros sem cep e não codificados pelo CNEFE)
+dengue_nao_cnefe$lat <- NULL 
+dengue_nao_cnefe$long <- NULL
+dengue_para_geocodificar <- rbind(dengue_nao_cnefe, dengue_semcep)
+
+
+
+
+#    Geoencoding via banco de dados interno CNEFE
+
+#probabilistico
+dengue_geocoded_prob <- dengue
+
+similarity_threshold <- 0.5  # Altere conforme necessário
+
+# Inicializar colunas lat, long e similarity no banco dengue_geocoded
+dengue_geocoded_prob$lat <- NA
+dengue_geocoded_prob$long <- NA
+dengue_geocoded_prob$similarity <- NA
+
+# Iterar por cada linha do dengue_geocoded
+for (i in 1:nrow(dengue_geocoded_prob)) {
+  address_dengue <- dengue_geocoded_prob$address[i]
+  
+  # Calcular a similaridade com todas as linhas do banco CNEFE
+  cnefe$similarity <- stringdist::stringdist(
+    a = address_dengue,
+    b = cnefe$NOM_SEGLOGR,
+    method = "jw"
+  )
+  
+  # Selecionar a linha com a menor distância (maior similaridade)
+  best_match <- cnefe %>%
+    filter(similarity <= 1 - similarity_threshold) %>% # Filtrar pelo limiar
+    slice_min(order_by = similarity, n = 1) # Selecionar a melhor correspondência
+  
+  # Atualizar os valores de latitude, longitude e similaridade no dengue_geocoded
+  if (nrow(best_match) > 0) {
+    dengue_geocoded_prob$lat[i] <- best_match$LATITUDE
+    dengue_geocoded_prob$long[i] <- best_match$LONGITUDE
+    dengue_geocoded_prob$similarity[i] <- best_match$similarity
+  }
+}
+
+# Verificar os resultados - inicio 15:17 P--- V"2024-12-21 21:28:22 -03"
+head(dengue_geocoded_prob)
+
+Sys.time()
+
+# Salvar o banco atualizado
+write.csv(dengue_geocoded_prob, "./DENGUE_CNEFE1.csv", row.names = FALSE)
+
+
+save.image(file = "Geoencoding_completo2112.RData")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Linhas com coordenadas faltantes
+dengue_NA <- dengue_geocoded %>%
+  filter(is.na(lat) | is.na(long))
+
+# Linhas com coordenadas faltantes
+dengue_NA <- dengue_geocoded %>%
+  filter(is.na(lat) | is.na(long))
+
+################### 
+
+dengue_geocoded <- read.csv("./GEOCODIFICACAO_API_CEPCNEFE.csv", sep = ",") |>
+  filter(!is.na(lat))
+
+dengue_na <- read.csv("./GEOCODIFICACAO_API_CEPCNEFE_NA.csv", sep = ",")
+sum(is.na(dengue_geocoded$lat))
+
+
+dados_filtrados_sem_na <- dengue_API |> filter(!is.na(lat))
+dados_final <- rbind(dados_filtrados_sem_na, dengue_geocoded)
+sum(is.na(dados_final$lat))
+write.csv(dados_final, "./BANCO_GEOCODIFICADO_01_122-2.csv")
+
+# O método de Record Linkage é baseado em três processos: a padronização dos
+# registros, a blocagem dos registros e o pareamento dos registros (Jaro, 1989). A
+# padronização tem como objetivo preparar os campos de dados para minimizar a
+# ocorrência de erros durante o processo de pareamento (Camargo & Coeli, 2000). Alguns
+# procedimentos são utilizados neste processo, como por exemplo, transformar os
+# caracteres alfabéticos para maiúsculas e eliminar a pontuação, os acentos e as cedilhas.
+
+# O processo seguinte, blocagem dos registros, cria blocos lógicos de registros
+# dentro dos arquivos a serem relacionados, com o objetivo de otimizar o processo de
+# pareamento. Os blocos são montados no sentido de aumentar a probabilidade de os
+# registros contidos representem pares verdadeiros. Os arquivos são indexados segundo
+# uma chave formada por um campo ou combinação de mais de um campo. Quando a
+# chave empregada traz informação relativa a nome, de pessoa ou de logradouro, é
+# comum a utilização de seu código fonético na blocagem de registros. O código fonético
+# mais empregado é o Soundex (Newcombe et al., 1959).
+
+library(fuzzyjoin)
+library(dplyr)
+library(stringdist)
+
+# Padronizar encoding dos dados
+dengue_geocoded$NM_LOGRADO <- iconv(dengue_geocoded$NM_LOGRADO, from = "UTF-8", to = "ASCII//TRANSLIT")
+cnefe$NOM_SEGLOGR <- iconv(cnefe$NOM_SEGLOGR, from = "UTF-8", to = "ASCII//TRANSLIT")
+
+
+#probabilistico teste 2
+# Carregar os pacotes necessários
+library(dplyr)
+library(stringdist)
+
+# Definir o limiar de similaridade
+similarity_threshold <- 0.5  # Altere conforme necessário
+
+# Criar um dataframe para armazenar os resultados
+dengue_geocoded_prob <- dengue_geocoded_prob %>%
+  mutate(lat = NA, long = NA, similarity = NA)
+
+# Calcular similaridades e encontrar melhores correspondências
+dengue_geocoded_prob <- dengue_geocoded_prob %>%
+  rowwise() %>%
+  mutate(
+    # Calcular similaridade entre o endereço e todos os do CNEFE
+    best_match = list(cnefe %>%
+                        mutate(similarity = stringdist::stringdist(address[i], NOM_SEGLOGR, method = "jw")) %>%
+                        filter(similarity <= (1 - similarity_threshold)) %>%
+                        slice_min(order_by = similarity, n = 1)),
+    # Extrair latitude, longitude e similaridade do melhor correspondente
+    lat = if_else(length(best_match$LATITUDE) > 0, best_match$LATITUDE, NA_real_),
+    long = if_else(length(best_match$LONGITUDE) > 0, best_match$LONGITUDE, NA_real_),
+    similarity = if_else(length(best_match$similarity) > 0, best_match$similarity, NA_real_)
+  ) %>%
+  ungroup()
+
+# Verificar os resultados
+head(dengue_geocoded_prob)
+
+#https://docs.google.com/spreadsheets/d/1RSC78kKki8z46QU3sOmV8S71kabJFZPK8b8b8RRbrn8/edit?gid=1587580360#gid=1587580360
+
+
+

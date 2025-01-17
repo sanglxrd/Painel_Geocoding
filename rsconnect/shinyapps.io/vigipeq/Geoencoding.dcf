@@ -1,0 +1,13 @@
+name: Geoencoding
+title: Painel_GEOCODING
+username: vigipeq
+account: vigipeq
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 13644878
+bundleId: 9580133
+url: https://vigipeq.shinyapps.io/Geoencoding/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: app_v1.R|app_v2 - com numero de corresp.R|app2.R|DENGUE_CNEFE.csv
